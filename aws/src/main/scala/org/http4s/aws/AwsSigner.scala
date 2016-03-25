@@ -1,33 +1,36 @@
 package org.http4s
 package aws
 
-import org.http4s._
-import scodec.bits._
-import scalaz.concurrent.Task
 import java.security.MessageDigest
+import java.nio.charset.{Charset => NioCharset, StandardCharsets}
+import java.text.SimpleDateFormat
+import java.time.Instant
+import java.time.format.DateTimeFormatter.{BASIC_ISO_DATE, ISO_INSTANT}
+
+import scalaz.concurrent.Task
 import scalaz.stream._
+import scodec.bits._
 import scodec.interop.scalaz._
 
 object AwsSigner {
-  case class Key(id: String, secret: String) {
-    def bytes = ByteVector.fromBase64(secret).getOrElse(throw new Exception(s"'$secret' not base64"))
+  case class Key private (id: String, secret: String)(val bytes: ByteVector)
+
+  object Key {
+    def apply(id: String, secret: String): ParseResult[Key] =
+      ByteVector.fromBase64(secret) match {
+        case Some(bytes) => ParseResult.success(new Key(id, secret)(bytes))
+        case None => ParseResult.fail(s"Secret was not Base64", secret)
+      }
   }
+
+  private val Method = "AWS4-HMAC-SHA256"
+  private val Charset: NioCharset = StandardCharsets.UTF_8
 }
 
 class AwsSigner(key: AwsSigner.Key, zone: String, service: String) {
-  val Method = "AWS4-HMAC-SHA256"
-  val Charset = java.nio.charset.Charset.forName("UTF-8")
+  import AwsSigner._
 
-  private def dateFormat(s: String) = {
-    val f = new java.text.SimpleDateFormat(s)
-    f.setTimeZone(java.util.TimeZone.getTimeZone("UTC"))
-    f
-  }
-
-  val fullDateFormat = dateFormat("YYYYMMdd'T'HHmmss'Z'")
-  val shortDateFormat = dateFormat("YYYYMMdd")
-
-  def hash(bv: ByteVector) = {
+  private def hash(bv: ByteVector) = {
     val digest = java.security.MessageDigest.getInstance("SHA-256")
     bv.grouped(1024 * 16) foreach { chunk =>
       digest.update(chunk.toByteBuffer)
@@ -36,9 +39,9 @@ class AwsSigner(key: AwsSigner.Key, zone: String, service: String) {
     ByteVector(digest.digest)
   }
 
-  def bytes(s: String) = ByteVector(s.getBytes(Charset))
+  private def bytes(s: String) = ByteVector(s.getBytes(Charset))
 
-  def hmac(key: ByteVector, data: ByteVector) = {
+  private def hmac(key: ByteVector, data: ByteVector) = {
     val algo = "HmacSHA256"
     val hmac = javax.crypto.Mac.getInstance(algo)
 
@@ -46,27 +49,25 @@ class AwsSigner(key: AwsSigner.Key, zone: String, service: String) {
     ByteVector(hmac.doFinal(data.toArray))
   }
 
-  def sign(string: String, date: java.util.Date) = {
+  private def sign(string: String, date: Instant) = {
     val kSecret = bytes(s"AWS4${key.secret}")
-    val kDate = hmac(kSecret, bytes(shortDateFormat.format(date)))
+    val kDate = hmac(kSecret, bytes(BASIC_ISO_DATE.format(date)))
     val kRegion = hmac(kDate, bytes(zone))
     val kService = hmac(kRegion, bytes(service))
     val kSigning = hmac(kService, bytes("aws4_request"))
     hmac(kSigning, bytes(string))
   }
 
-  private def now = new java.util.Date
-
-  def apply(request: Request, date: java.util.Date = now):Task[Request] = {
+  def apply(request: Request, date: Instant = Instant.now): Task[Request] = {
 
     request.body.runFoldMap(a => a) map { fullBody =>
 
       val headers = request.headers.put(
-        Header("x-amz-date", fullDateFormat.format(date))
+        Header("x-amz-date", ISO_INSTANT.format(date))
       )
 
       val headersToSign = headers.put(
-        Header("Host", request.uri.host.map(_.toString).getOrElse(throw new Exception("need a Host")))
+        Header("Host", request.uri.host.map(_.toString).getOrElse(throw new IllegalArgumentException("need a Host")))
       ).toList sortBy { h =>
         h.name.toString.toLowerCase
       }
@@ -87,13 +88,13 @@ class AwsSigner(key: AwsSigner.Key, zone: String, service: String) {
 
       val stringToSign = Seq(
         Method,
-        fullDateFormat.format(date),
-        shortDateFormat.format(date) + s"/$zone/$service/aws4_request",
+        ISO_INSTANT.format(date),
+        BASIC_ISO_DATE.format(date) + s"/$zone/$service/aws4_request",
         hash(ByteVector(canonicalRequest.getBytes(Charset))).toHex
       ) mkString "\n"
 
       val auth = Seq(
-        "Credential" -> s"${key.id}/${shortDateFormat.format(date)}/$zone/$service/aws4_request",
+        "Credential" -> s"${key.id}/${BASIC_ISO_DATE.format(date)}/$zone/$service/aws4_request",
         "SignedHeaders" -> signedHeaders,
         "Signature" -> sign(stringToSign, date).toHex
       ) map { case (k, v) => s"$k=$v" } mkString ", "
@@ -103,6 +104,5 @@ class AwsSigner(key: AwsSigner.Key, zone: String, service: String) {
         body = Process.emit(fullBody)
       )
     }
-
   }
 }
