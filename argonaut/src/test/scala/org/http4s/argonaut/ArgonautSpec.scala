@@ -30,7 +30,8 @@ class ArgonautSpec extends JawnDecodeSupportSpec[Json] with Argonauts {
     }
 
     "write with specified pretty params" in {
-      writeToString(json)(jsonEncoder(PrettyParams.spaces2)) must_== (
+      val instances = ArgonautInstances(PrettyParams.spaces2)
+      writeToString(json)(instances.jsonEncoderOf) must_== (
         """{
           |  "test" : "ArgonautSupport"
           |}""".stripMargin)
@@ -47,7 +48,8 @@ class ArgonautSpec extends JawnDecodeSupportSpec[Json] with Argonauts {
     }
 
     "write with specified pretty params" in {
-      writeToString(foo)(jsonEncoderOf[Foo](PrettyParams.spaces4)) must_== (
+      val instances = ArgonautInstances(PrettyParams.spaces4)
+      writeToString(foo)(instances.jsonEncoderOf[Foo]) must_== (
         """{
           |    "bar" : 42
           |}""".stripMargin)

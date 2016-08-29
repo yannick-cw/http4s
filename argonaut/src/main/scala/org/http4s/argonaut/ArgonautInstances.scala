@@ -16,19 +16,23 @@ trait ArgonautInstances {
       )
     }
 
-  def jsonEncoder(prettyParams: PrettyParams): EntityEncoder[Json] =
+  /* The parameters used to encode JSON */
+  protected def prettyParams: PrettyParams
+
+  implicit val jsonEncoder: EntityEncoder[Json] =
     EntityEncoder.stringEncoder(Charset.`UTF-8`).contramap[Json] { json =>
       // TODO naive implementation materializes to a String.
       // Look into replacing after https://github.com/non/jawn/issues/6#issuecomment-65018736
       prettyParams.pretty(json)
     }.withContentType(`Content-Type`(MediaType.`application/json`, Charset.`UTF-8`))
 
-  implicit val jsonEncoder: EntityEncoder[Json] =
-    jsonEncoder(Argonaut.nospace)
-
-  def jsonEncoderOf[A](prettyParams: PrettyParams)(implicit encoder: EncodeJson[A]): EntityEncoder[A] =
-    jsonEncoder(prettyParams).contramap[A](encoder.encode)
-
   def jsonEncoderOf[A](implicit encoder: EncodeJson[A]): EntityEncoder[A] =
-    jsonEncoderOf(Argonaut.nospace)
+    jsonEncoder.contramap[A](encoder.encode)
+}
+
+object ArgonautInstances {
+  def apply(pp: PrettyParams): ArgonautInstances =
+    new ArgonautInstances {
+      def prettyParams = pp
+    }
 }
