@@ -28,6 +28,13 @@ class ArgonautSpec extends JawnDecodeSupportSpec[Json] with Argonauts {
     "write compact JSON" in {
       writeToString(json) must_== ("""{"test":"ArgonautSupport"}""")
     }
+
+    "write with specified pretty params" in {
+      writeToString(json)(jsonEncoder(PrettyParams.spaces2)) must_== (
+        """{
+          |  "test" : "ArgonautSupport"
+          |}""".stripMargin)
+    }
   }
 
   "jsonEncoderOf" should {
@@ -37,6 +44,14 @@ class ArgonautSpec extends JawnDecodeSupportSpec[Json] with Argonauts {
 
     "write compact JSON" in {
       writeToString(foo)(jsonEncoderOf[Foo]) must_== ("""{"bar":42}""")
+    }
+
+    "write with specified pretty params" in {
+      implicit val pp = PrettyParams.spaces4
+      writeToString(foo)(jsonEncoderOf[Foo]) must_== (
+        """{
+          |    "bar" : 42
+          |}""".stripMargin)
     }
   }
 
